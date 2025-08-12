@@ -218,6 +218,53 @@ def save_stats(account_name):
     return jsonify({"status": "success", "message": f"Stats saved for account '{account_name}'."})
 
 
+@app.route("/accounts/<string:account_name>/check-limit", methods=["GET"])
+def check_account_limit(account_name):
+    """
+    Checks if a GoLogin account has reached its free API request limit.
+    """
+    logger.info(f"Checking API limit for account: '{account_name}'...")
+    
+    accounts = data_manager.get_all_accounts()
+    account_info = accounts.get(account_name)
+    
+    if not account_info:
+        return jsonify({"error": f"Account '{account_name}' not found."}), 404
+        
+    token = account_info.get("token")
+    headers = {'Authorization': f'Bearer {token}'}
+    
+    try:
+        # Make the same request as fetching profiles to test the API
+        response = requests.get(Config.GOLOGIN_API_URL, headers=headers, timeout=15)
+        
+        # Check the response text for the specific limit message
+        if "You have reached your free API requests limit" in response.text:
+            logger.warning(f"API limit reached for account '{account_name}'.")
+            return jsonify({
+                "account_name": account_name,
+                "status": "limit_exceeded",
+                "limit_reached": True
+            })
+        
+        # If the limit message is not present, check for other errors
+        response.raise_for_status()
+        
+        # If no errors and no limit message, the account is okay
+        logger.info(f"API limit is OK for account '{account_name}'.")
+        return jsonify({
+            "account_name": account_name,
+            "status": "ok",
+            "limit_reached": False
+        })
+        
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 401:
+            return jsonify({"error": "Unauthorized. The API token for this account is invalid."}), 401
+        return jsonify({"error": f"HTTP Error from GoLogin API: {e.response.status_code}"}), e.response.status_code
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": f"Network error connecting to GoLogin API: {e}"}), 503
+
 # --- Main Execution ---
 if __name__ == "__main__":
     ensure_directories()
