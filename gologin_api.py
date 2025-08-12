@@ -132,6 +132,20 @@ def list_accounts():
     accounts = data_manager.get_all_accounts()
     return jsonify({"accounts": list(accounts.keys())})
 
+# --- NEW ENDPOINT TO GET A SINGLE ACCOUNT'S DETAILS ---
+@app.route("/accounts/<string:account_name>", methods=["GET"])
+def get_account_details(account_name):
+    """Returns all details for a specific account, including the token."""
+    accounts = data_manager.get_all_accounts()
+    account_info = accounts.get(account_name)
+   
+    if not account_info:
+        return jsonify({"error": f"Account '{account_name}' not found."}), 404
+       
+    # The account_info already contains {"token": "...", "profiles": [...]}.
+    return jsonify(account_info)
+# --- END OF NEW ENDPOINT ---
+
 @app.route("/accounts", methods=["POST"])
 def add_account():
     """Adds a new GoLogin account with its API token."""
@@ -162,24 +176,19 @@ def fetch_and_save_profiles(account_name):
         response = requests.get(Config.GOLOGIN_API_URL, headers=headers, timeout=15)
         response.raise_for_status()
         
-        # --- THIS IS THE EDITED SECTION ---
         response_data = response.json()
         
-        # Check if the response is a dictionary and contains the 'profiles' key
         if not isinstance(response_data, dict) or 'profiles' not in response_data:
             logger.error(f"GoLogin API returned unexpected data format: {response_data}")
             return jsonify({"error": "Received unexpected data format from GoLogin API."}), 500
         
-        # Get the list of profiles from inside the dictionary
         profiles_list = response_data.get('profiles', [])
         
         if not isinstance(profiles_list, list):
             logger.error(f"The 'profiles' key did not contain a list. Found: {type(profiles_list)}")
             return jsonify({"error": "Received unexpected data format inside 'profiles' key."}), 500
 
-        # Extract just the 'id' from each profile object in the list
         profile_ids = [p.get('id') for p in profiles_list if 'id' in p]
-        # --- END OF EDITED SECTION ---
         
         data_manager.update_account_profiles(account_name, profile_ids)
         
@@ -217,12 +226,9 @@ def save_stats(account_name):
     
     return jsonify({"status": "success", "message": f"Stats saved for account '{account_name}'."})
 
-
 @app.route("/accounts/<string:account_name>/check-limit", methods=["GET"])
 def check_account_limit(account_name):
-    """
-    Checks if a GoLogin account has reached its free API request limit.
-    """
+    """Checks if a GoLogin account has reached its free API request limit."""
     logger.info(f"Checking API limit for account: '{account_name}'...")
     
     accounts = data_manager.get_all_accounts()
@@ -235,10 +241,8 @@ def check_account_limit(account_name):
     headers = {'Authorization': f'Bearer {token}'}
     
     try:
-        # Make the same request as fetching profiles to test the API
         response = requests.get(Config.GOLOGIN_API_URL, headers=headers, timeout=15)
         
-        # Check the response text for the specific limit message
         if "You have reached your free API requests limit" in response.text:
             logger.warning(f"API limit reached for account '{account_name}'.")
             return jsonify({
@@ -247,10 +251,8 @@ def check_account_limit(account_name):
                 "limit_reached": True
             })
         
-        # If the limit message is not present, check for other errors
         response.raise_for_status()
         
-        # If no errors and no limit message, the account is okay
         logger.info(f"API limit is OK for account '{account_name}'.")
         return jsonify({
             "account_name": account_name,
@@ -265,12 +267,11 @@ def check_account_limit(account_name):
     except requests.exceptions.RequestException as e:
         return jsonify({"error": f"Network error connecting to GoLogin API: {e}"}), 503
 
+
 # --- Main Execution ---
 if __name__ == "__main__":
     ensure_directories()
     try:
-        # For production, use a proper WSGI server like Gunicorn or Waitress
-        # Example: waitress-serve --host=0.0.0.0 --port=8080 gologin_api:app
         app.run(host="0.0.0.0", port=8080, debug=False)
     except Exception as e:
         logger.critical(f"Failed to start Flask server: {e}", exc_info=True)
