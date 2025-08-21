@@ -64,12 +64,42 @@ class DataManager:
     @classmethod
     def get_all_accounts(cls) -> Dict[str, Any]:
         accounts = cls.read_json_file(Config.ACCOUNTS_FILE)
-        return accounts if isinstance(accounts, dict) else {}
-
+        accounts = accounts if isinstance(accounts, dict) else {}
+        # Backfill adoption keys for older records
+        changed = False
+        for a in accounts.values():
+            if "adopted" not in a:
+                a["adopted"] = False; changed = True
+            if "adopted_by" not in a:
+                a["adopted_by"] = None; changed = True
+            if "adopted_at" not in a:
+                a["adopted_at"] = None; changed = True
+        if changed:
+            cls.write_json_file(Config.ACCOUNTS_FILE, accounts)
+        return accounts
+    @classmethod
+    def set_adoption(cls, account_name: str, adopted: bool, adopted_by: Optional[str]):
+        accounts = cls.get_all_accounts()
+        if account_name not in accounts:
+            return False, "Account not found"
+        acct = accounts[account_name]
+        acct["adopted"] = adopted
+        acct["adopted_by"] = adopted_by if adopted else None
+        acct["adopted_at"] = datetime.now().isoformat() if adopted else None
+        cls.write_json_file(Config.ACCOUNTS_FILE, accounts)
+        return True, None
+        
     @classmethod
     def save_account(cls, account_name: str, token: str) -> bool:
         accounts = cls.get_all_accounts()
-        accounts[account_name] = {"token": token, "profiles": []}
+        accounts[account_name] = {
+            "token": token,
+            "profiles": [],
+            # NEW adoption fields
+            "adopted": False,
+            "adopted_by": None,
+            "adopted_at": None,
+        }
         cls.write_json_file(Config.ACCOUNTS_FILE, accounts)
         return True
 
@@ -145,6 +175,46 @@ def get_account_details(account_name):
     # The account_info already contains {"token": "...", "profiles": [...]}.
     return jsonify(account_info)
 # --- END OF NEW ENDPOINT ---
+
+@app.route("/accounts/<string:account_name>/adopt", methods=["POST"])
+def adopt_account(account_name):
+    """
+    Claim or release an account for a specific VPS.
+    Body: {"action": "claim"|"release", "adopted_by": "vps-123"}
+    - claim: if already adopted by another VPS -> 409
+    - release: sets adopted=false (adopted_by optional)
+    """
+    data = request.get_json(silent=True) or {}
+    action = data.get("action")
+    vps_id = data.get("adopted_by")
+
+    if action not in ("claim", "release"):
+        return jsonify({"error": "action must be 'claim' or 'release'"}), 400
+
+    accounts = data_manager.get_all_accounts()
+    acct = accounts.get(account_name)
+    if not acct:
+        return jsonify({"error": f"Account '{account_name}' not found."}), 404
+
+    if action == "claim":
+        if not vps_id:
+            return jsonify({"error": "adopted_by is required for claim"}), 400
+        if acct.get("adopted") and acct.get("adopted_by") != vps_id:
+            # already claimed by someone else
+            return jsonify({
+                "status": "conflict",
+                "message": f"Account already adopted by {acct.get('adopted_by')}"
+            }), 409
+        ok, err = data_manager.set_adoption(account_name, True, vps_id)
+        if not ok:
+            return jsonify({"error": err or "Failed to claim"}), 500
+        return jsonify({"status": "claimed", "account_name": account_name, "adopted_by": vps_id})
+
+    # release
+    ok, err = data_manager.set_adoption(account_name, False, None)
+    if not ok:
+        return jsonify({"error": err or "Failed to release"}), 500
+    return jsonify({"status": "released", "account_name": account_name})
 
 @app.route("/accounts", methods=["POST"])
 def add_account():
