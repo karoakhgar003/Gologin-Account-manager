@@ -1,7 +1,7 @@
 # gologin_api.py
-import os
 import json
 import logging
+import sys
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Any, Optional
