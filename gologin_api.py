@@ -3,7 +3,7 @@ import json
 import logging
 import sys
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 
 import requests
@@ -67,13 +67,34 @@ class DataManager:
         accounts = accounts if isinstance(accounts, dict) else {}
         # Backfill adoption keys for older records
         changed = False
-        for a in accounts.values():
+        now = datetime.now()
+        unlock_timeout = timedelta(minutes=5)
+
+        for account_name, a in accounts.items():
             if "adopted" not in a:
                 a["adopted"] = False; changed = True
             if "adopted_by" not in a:
                 a["adopted_by"] = None; changed = True
             if "adopted_at" not in a:
                 a["adopted_at"] = None; changed = True
+
+            # Auto-unlock stale adoptions
+            if a.get("adopted") and a.get("adopted_at"):
+                try:
+                    adopted_time = datetime.fromisoformat(a["adopted_at"])
+                    if now - adopted_time > unlock_timeout:
+                        logger.warning(
+                            f"Auto-unlocking account '{account_name}' due to timeout. "
+                            f"Adopted by '{a.get('adopted_by')}' at {a.get('adopted_at')}."
+                        )
+                        a["adopted"] = False
+                        a["adopted_by"] = None
+                        a["adopted_at"] = None
+                        changed = True
+                except (ValueError, TypeError):
+                    # If adopted_at is not a valid ISO format string, log it but don't crash.
+                    logger.error(f"Could not parse 'adopted_at' timestamp for account '{account_name}': {a.get('adopted_at')}")
+
         if changed:
             cls.write_json_file(Config.ACCOUNTS_FILE, accounts)
         return accounts
