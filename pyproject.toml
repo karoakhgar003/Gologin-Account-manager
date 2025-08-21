@@ -1,0 +1,9 @@
+[project]
+name = "gologin-account-maneger"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.12"
+dependencies = [
+    "flask>=3.1.2",
+    "requests>=2.32.5",
+]
